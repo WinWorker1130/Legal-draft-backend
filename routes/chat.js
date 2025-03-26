@@ -168,7 +168,7 @@ router.post('/', async (req, res) => {
     // Call Claude API
     const response = await anthropic.messages.create({
       model: "claude-3-7-sonnet-20250219",
-      max_tokens: 4000, // Reduced from 8000 to improve response time
+      max_tokens: 8000, // Reduced from 8000 to improve response time
       temperature: 0,
       system: systemPrompt,
       messages: [
