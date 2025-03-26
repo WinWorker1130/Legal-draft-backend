@@ -89,15 +89,23 @@ function removeResponseTag(content) {
 function getUnifiedSystemPrompt() {
   return `You are a legal AI assistant that can both answer general questions and draft legal documents.
 
-  YOUR PRIMARY TASK: Analyze each user question to determine if it is:
+  YOUR PRIMARY TASK: Analyze the conversation context and the current user question to determine if it is:
   1. A GENERAL QUESTION (asking for information, explanation, or advice)
   2. A DRAFT REQUEST (asking you to create a legal document)
+  3. A FOLLOW-UP to a previous question or request
 
-  HOW TO ANALYZE THE QUESTION:
+  HOW TO ANALYZE THE CONVERSATION:
+  - Consider the entire conversation history, not just the current message
+  - Look for connections between the current message and previous messages
+  - If the current message appears to be answering questions you previously asked, use that information to continue the conversation
+
+  HOW TO IDENTIFY REQUEST TYPES:
   - General questions typically ask for information, explanations, or advice
     Examples: "What is a non-disclosure agreement?", "How does bankruptcy work?", "What are my rights as a tenant?"
-  - Draft requests typically ask you to create or help write a legal document
-    Examples: "Draft an employment contract", "Create a cease and desist letter", "Write a rental agreement"
+  - Draft requests may be direct or indirect, and can use various phrasings
+    Direct examples: "Draft an NDA", "Write a non-disclosure agreement", "Create a cease and desist letter"
+    Indirect examples: "I need an NDA", "Can you help with a rental agreement?", "I'm looking for a contract"
+  - Follow-up responses typically provide information you requested or answer questions you asked
 
   FOR GENERAL QUESTIONS:
   - Provide informative, accurate, and helpful responses
@@ -107,12 +115,21 @@ function getUnifiedSystemPrompt() {
   - Start your response with "[GENERAL_RESPONSE]" (this tag will be removed before showing to the user)
 
   FOR DRAFT REQUESTS:
-  - If the request is too vague, ask follow-up questions to gather necessary information
+  - For ANY draft request (whether direct like "write NDA" or indirect like "I need an NDA"), ALWAYS ask follow-up questions to gather necessary information UNLESS:
+    1. The user has already provided detailed specifications in their request, OR
+    2. The user is clearly responding to your previous questions with the necessary information
+  - Required information typically includes: parties involved, key terms, jurisdiction, special requirements, etc.
   - Once you have enough information, create a legal draft that mimics the style and structure of professional legal documents
   - Format your draft with appropriate headings, sections, and legal terminology
   - Structure the document according to its type (contract, memo, letter, etc.)
   - Make the draft comprehensive and tailored to the specific request
   - Start your response with "[LEGAL_DRAFT]" followed by the document type in brackets, e.g., "[LEGAL_DRAFT][CONTRACT]" (this tag will be removed before showing to the user)
+
+  FOR FOLLOW-UP RESPONSES:
+  - Connect the new information to what was previously discussed
+  - If the user is answering questions you asked about a document request, use that information to create or refine the document
+  - If you need more information, ask additional specific questions
+  - If you now have enough information to create a draft, proceed with creating it
 
   WHEN CREATING LEGAL DRAFTS, include elements such as:
   - Clear title and introduction
@@ -123,8 +140,6 @@ function getUnifiedSystemPrompt() {
   - Signature blocks or conclusion as appropriate
 
   Base your drafts on the legal knowledge provided in the context (if available) and follow standard legal drafting conventions.
-  
-  IMPORTANT: You must analyze each question on its own merits. Do not rely on previous analysis methods like checking for specific keywords or patterns. Instead, understand the user's intent and respond accordingly.
   
   ALWAYS start your response with either "[GENERAL_RESPONSE]" or "[LEGAL_DRAFT][DOCUMENT_TYPE]" to indicate the type of response you are providing.`;
 }
@@ -165,18 +180,57 @@ router.post('/', async (req, res) => {
       userContent = `Context:\n${legalContext}\n\nRequest: ${message}`;
     }
     
-    // Call Claude API
-    const response = await anthropic.messages.create({
-      model: "claude-3-7-sonnet-20250219",
-      max_tokens: 8000, // Reduced from 8000 to improve response time
-      temperature: 0,
-      system: systemPrompt,
-      messages: [
-        {
+    // Prepare messages array for Claude API
+    let messagesForClaude = [];
+    
+    // If we have a chat history ID, retrieve the conversation history
+    if (chatHistoryId) {
+      try {
+        // Retrieve chat history from database
+        const chatHistory = await ChatHistory.findById(chatHistoryId);
+        
+        if (chatHistory && chatHistory.messages && chatHistory.messages.length > 0) {
+          // Convert the chat history to the format expected by Claude
+          messagesForClaude = chatHistory.messages.map(msg => ({
+            role: msg.role,
+            content: msg.content
+          }));
+          
+          // Add the current message with context
+          messagesForClaude.push({
+            role: "user",
+            content: userContent
+          });
+        } else {
+          // If no chat history found, just use the current message
+          messagesForClaude = [{
+            role: "user",
+            content: userContent
+          }];
+        }
+      } catch (error) {
+        console.error('Error retrieving chat history:', error);
+        // If there's an error, fall back to just using the current message
+        messagesForClaude = [{
           role: "user",
           content: userContent
-        }
-      ]
+        }];
+      }
+    } else {
+      // If no chat history ID, just use the current message
+      messagesForClaude = [{
+        role: "user",
+        content: userContent
+      }];
+    }
+    
+    // Call Claude API with the full conversation history
+    const response = await anthropic.messages.create({
+      model: "claude-3-7-sonnet-20250219",
+      max_tokens: 8000,
+      temperature: 0,
+      system: systemPrompt,
+      messages: messagesForClaude
     });
 
     // Process the response
