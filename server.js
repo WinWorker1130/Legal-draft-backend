@@ -12,8 +12,8 @@ const axios = require('axios');
 // Initialize Express app
 const app = express();
 
-// Set the port, either from the environment variable or default to 4000
-const port = process.env.PORT || 4000;
+// Set the port, either from the environment variable or default to 5001
+const port = process.env.PORT || 5001;
 
 // Vector service configuration
 const VECTOR_SERVICE_PORT = 5050;

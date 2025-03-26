@@ -29,15 +29,18 @@ router.get('/', async (req, res) => {
 });
 
 // Get all chat histories for a patient
-router.get('/:patientId', async (req, res) => {
+router.get('/patient/:patientId', async (req, res) => {
+  console.log(`GET /chat-history/patient/${req.params.patientId} - Fetching chat histories for patient`);
   try {
     const chatHistories = await ChatHistory.find({ 
       patientId: req.params.patientId 
     }).sort({ updatedAt: -1 });
     
+    console.log(`Found ${chatHistories.length} chat histories for patient ${req.params.patientId}`);
+    
     res.json(chatHistories);
   } catch (error) {
-    console.error('Error fetching chat histories:', error);
+    console.error('Error fetching chat histories for patient:', error);
     res.status(500).json({ error: 'Error fetching chat histories' });
   }
 });
@@ -104,6 +107,39 @@ router.put('/:id', async (req, res) => {
   } catch (error) {
     console.error('Error updating chat history:', error);
     res.status(500).json({ error: 'Error updating chat history' });
+  }
+});
+
+// Delete a chat history
+router.delete('/:id', async (req, res) => {
+  console.log(`DELETE /chat-history/${req.params.id} - Deleting chat history`);
+  console.log('Request params:', req.params);
+  console.log('Request query:', req.query);
+  console.log('Request body:', req.body);
+  
+  try {
+    console.log(`Attempting to find and delete chat history with ID: ${req.params.id}`);
+    const result = await ChatHistory.findByIdAndDelete(req.params.id);
+    
+    if (!result) {
+      console.log(`Chat history with ID ${req.params.id} not found for deletion`);
+      return res.status(404).json({ error: 'Chat history not found' });
+    }
+    
+    console.log(`Successfully deleted chat history with ID: ${req.params.id}`);
+    console.log('Deleted document:', result);
+    res.json({ message: 'Chat history deleted successfully', deletedId: req.params.id });
+  } catch (error) {
+    console.error('Error deleting chat history:', error);
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid ID format' });
+    }
+    
+    res.status(500).json({ error: 'Error deleting chat history', message: error.message });
   }
 });
 
