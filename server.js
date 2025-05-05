@@ -7,7 +7,32 @@ const chatHistoryRoutes = require('./routes/chatHistory');
 const path = require('path');
 const fs = require("fs");
 const { spawn } = require('child_process');
-const axios = require('axios');
+const AWS = require('aws-sdk');
+const { VECTOR_SERVICE_PORT } = require('./utils/vectorDatabaseUtils');
+
+// Configure AWS SDK
+AWS.config.update({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION || 'us-east-1'
+});
+
+// Initialize S3
+const s3 = new AWS.S3();
+
+// Verify S3 bucket exists
+const S3_BUCKET = process.env.S3_BUCKET_NAME;
+if (S3_BUCKET) {
+  s3.headBucket({ Bucket: S3_BUCKET }, (err, data) => {
+    if (err) {
+      console.error(`Error accessing S3 bucket ${S3_BUCKET}:`, err.message);
+    } else {
+      console.log(`Successfully connected to S3 bucket: ${S3_BUCKET}`);
+    }
+  });
+} else {
+  console.warn('S3_BUCKET_NAME not set in environment variables');
+}
 
 // Initialize Express app
 const app = express();
@@ -15,9 +40,7 @@ const app = express();
 // Set the port, either from the environment variable or default to 5001
 const port = process.env.PORT || 5001;
 
-// Vector service configuration
-const VECTOR_SERVICE_PORT = 5050;
-const VECTOR_SERVICE_URL = `http://localhost:${VECTOR_SERVICE_PORT}`;
+// Vector service process
 let vectorServiceProcess = null;
 
 // Function to start the vector service
@@ -47,37 +70,6 @@ async function startVectorService() {
   console.log('Vector service started. Database will be loaded on first query.');
 }
 
-// Function to load the vector database (called on first query)
-async function loadVectorDatabase() {
-  // Path to the vector database
-  const vectorDatabasePath = path.join(__dirname, 'vector_database.pkl');
-  
-  try {
-    // Check if the database is already loaded
-    const statusResponse = await axios.get(`${VECTOR_SERVICE_URL}/status`);
-    
-    if (statusResponse.data.loaded) {
-      console.log('Vector database already loaded');
-      return true;
-    }
-    
-    console.log('Loading vector database...');
-    const response = await axios.post(`${VECTOR_SERVICE_URL}/load`, {
-      path: vectorDatabasePath
-    });
-    
-    if (response.data.status === 'success') {
-      console.log('Vector database loaded successfully');
-      return true;
-    } else {
-      console.error('Failed to load vector database:', response.data.message);
-      return false;
-    }
-  } catch (error) {
-    console.error('Error loading vector database:', error.message);
-    return false;
-  }
-}
 
 // Connect to MongoDB
 connectDB();
@@ -86,14 +78,23 @@ connectDB();
 app.use(cors());
 app.use(express.json());
 
-// Create uploads directory if it doesn't exist
+// Create required directories if they don't exist
 if (!fs.existsSync("./uploads")) {
   fs.mkdirSync("./uploads");
 }
 
+if (!fs.existsSync("./data")) {
+  fs.mkdirSync("./data");
+  console.log("Created data directory for document storage");
+}
+
+// Import document routes
+const documentRoutes = require('./routes/documents');
+
 // Routes
 app.use('/api/chat', chatRoutes);
 app.use('/api/chat-history', chatHistoryRoutes);
+app.use('/api/documents', documentRoutes);
 
 
 // Start the server on the specified port
@@ -117,8 +118,7 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-// Export the app and loadVectorDatabase function
+// Export the app
 module.exports = {
-  app,
-  loadVectorDatabase
+  app
 };

@@ -1,6 +1,19 @@
 // models/ChatHistory.js
 const mongoose = require('mongoose');
 
+const sourceDocumentSchema = new mongoose.Schema({
+  filename: {
+    type: String,
+    required: true
+  },
+  source: {
+    type: String,
+    enum: ['local', 's3'],
+    default: 'local'
+  },
+  s3Key: String
+}, { _id: false });
+
 const messageSchema = new mongoose.Schema({
   role: {
     type: String,
@@ -15,7 +28,9 @@ const messageSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  draftContent: String
+  draftContent: String,
+  sourceFiles: [String],
+  sourceDocuments: [sourceDocumentSchema]
 });
 
 const chatHistorySchema = new mongoose.Schema({

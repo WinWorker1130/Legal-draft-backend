@@ -2,72 +2,13 @@
 const express = require('express');
 const router = express.Router();
 const { Anthropic } = require('@anthropic-ai/sdk');
-const axios = require('axios');
 const ChatHistory = require('../models/ChatHistory');
-
-// Vector service configuration
-const VECTOR_SERVICE_PORT = 5050;
-const VECTOR_SERVICE_URL = `http://localhost:${VECTOR_SERVICE_PORT}`;
+const { queryLegalKnowledge } = require('../utils/vectorDatabaseUtils');
 
 const anthropic = new Anthropic({
   // apiKey: process.env.CLAUDE_API_KEY,
   apiKey: "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"
 });
-
-// Import the server module
-const server = require('../server');
-
-// Function to query the legal knowledge base using the vector service
-async function queryLegalKnowledge(query) {
-  try {
-    console.log('Querying legal knowledge base with:', query);
-    
-    // Check if the vector service is running
-    const statusResponse = await axios.get(`${VECTOR_SERVICE_URL}/status`);
-    
-    // If the database is not loaded, try to load it
-    if (!statusResponse.data.loaded) {
-      console.log('Vector database not loaded, attempting to load it now...');
-      
-      try {
-        // Use the loadVectorDatabase function from server.js
-        const loaded = await server.loadVectorDatabase();
-        
-        if (!loaded) {
-          console.error('Failed to load vector database');
-          return {
-            status: 'error',
-            message: 'Failed to load vector database'
-          };
-        }
-        
-        console.log('Vector database loaded successfully on demand');
-      } catch (loadError) {
-        console.error('Error loading vector database:', loadError.message);
-        return {
-          status: 'error',
-          message: `Error loading vector database: ${loadError.message}`
-        };
-      }
-    }
-    
-    // Query the vector service
-    const response = await axios.post(`${VECTOR_SERVICE_URL}/query`, {
-      query: query,
-      k: 3  // Reduced from 5 to 3 for faster responses
-    });
-    
-    return response.data;
-  } catch (error) {
-    console.error('Error querying vector service:', error.message);
-    
-    // If the vector service is not available, return an error
-    return {
-      status: 'error',
-      message: `Error querying vector service: ${error.message}`
-    };
-  }
-}
 
 // Function to extract document type from Claude's response tag
 function extractDocumentType(content) {
@@ -152,9 +93,10 @@ router.post('/', async (req, res) => {
     
     // Query the legal knowledge base for all messages
     let legalKnowledge = [];
+    let legalResult = null;
     try {
       console.log('Querying legal knowledge base');
-      const legalResult = await queryLegalKnowledge(message);
+      legalResult = await queryLegalKnowledge(message);
       if (legalResult.status === 'success') {
         legalKnowledge = legalResult.results;
       }
@@ -245,6 +187,40 @@ router.post('/', async (req, res) => {
     // Remove the tag from the response
     formattedContent = removeResponseTag(formattedContent);
     
+    // Create source documents array with more detailed information
+    const sourceDocuments = legalResult && legalResult.results 
+      ? legalResult.results
+          .filter(item => item.metadata && (item.metadata.source || item.metadata.s3_key))
+          .map(item => {
+            const metadata = item.metadata;
+            
+            // Check if it's an S3 source
+            if (metadata.source_type === 's3' && metadata.s3_key) {
+              return {
+                filename: metadata.file_name || metadata.s3_key.split('/').pop(),
+                source: 's3',
+                s3Key: metadata.s3_key
+              };
+            } else {
+              // Local file
+              const filename = metadata.file_name || 
+                (metadata.source ? metadata.source.split('/').pop() : 'unknown');
+              
+              return {
+                filename: filename,
+                source: 'local'
+              };
+            }
+          })
+          // Remove duplicates based on filename and source
+          .filter((doc, index, self) => 
+            index === self.findIndex(d => 
+              d.filename === doc.filename && d.source === doc.source && 
+              (d.source !== 's3' || d.s3Key === doc.s3Key)
+            )
+          )
+      : [];
+
     // Create the response object
     const processedResponse = {
       content: formattedContent,
@@ -252,7 +228,9 @@ router.post('/', async (req, res) => {
       isLegalConversational: false, // No longer using this distinction
       isVagueRequest: false, // No longer using this distinction
       documentType: documentType,
-      isLegalDraft: isLegalDraft
+      isLegalDraft: isLegalDraft,
+      sourceFiles: legalResult && legalResult.sourceFiles ? legalResult.sourceFiles : [],
+      sourceDocuments: sourceDocuments
     };
 
     // Create or update chat history
@@ -267,7 +245,9 @@ router.post('/', async (req, res) => {
               role: 'assistant', 
               content: formattedContent,
               isLegalDraft: processedResponse.isLegalDraft,
-              draftContent: processedResponse.draftContent
+              draftContent: processedResponse.draftContent,
+              sourceFiles: processedResponse.sourceFiles,
+              sourceDocuments: processedResponse.sourceDocuments
             }
           );
           chatHistory.updatedAt = Date.now();
@@ -286,7 +266,9 @@ router.post('/', async (req, res) => {
               role: 'assistant', 
               content: formattedContent,
               isLegalDraft: processedResponse.isLegalDraft,
-              draftContent: processedResponse.draftContent
+              draftContent: processedResponse.draftContent,
+              sourceFiles: processedResponse.sourceFiles,
+              sourceDocuments: processedResponse.sourceDocuments
             }
           ]
         };

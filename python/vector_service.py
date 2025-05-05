@@ -69,9 +69,18 @@ def query_vector_database(query, k=3):  # Reduced from 5 to 3 for faster respons
         # Format results
         results = []
         for doc, score in docs:
+            # Ensure metadata is properly formatted for S3 sources
+            metadata = doc.metadata.copy() if doc.metadata else {}
+            
+            # Normalize metadata keys for consistency
+            if 'source_type' in metadata and metadata['source_type'] == 's3' and 's3_key' in metadata:
+                # Ensure S3 metadata is properly formatted
+                metadata['s3_key'] = metadata['s3_key']
+                metadata['file_name'] = metadata.get('file_name', metadata['s3_key'].split('/')[-1])
+            
             results.append({
                 "content": doc.page_content,
-                "metadata": doc.metadata,
+                "metadata": metadata,
                 "score": float(score)
             })
         
